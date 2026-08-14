@@ -10,7 +10,7 @@ working tool-calling and long-context reliability.
 > See [CALIBRATION.md](CALIBRATION.md) for the full rejection log — several
 > "obvious" configs look correct and silently degrade the model.
 
-## Why this is hard
+## Constraints that shape this config
 
 A 27B model at NVFP4 still occupies **~22.1 GiB** of the 5090's 31.4 GiB usable
 VRAM. The native 256K window needs ~8.2 GiB of fp8 KV cache, i.e. more than the
