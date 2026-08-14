@@ -93,10 +93,18 @@ vllm serve /path/to/unsloth/Qwen3.8-27B-NVFP4 \
 ## Files
 
 ```
-scripts/serve_qwen38.sh   — drop-in launcher (the recipe above, parameterized)
+scripts/start.sh            — start the server in the background (pidfile + log)
+scripts/stop.sh             — graceful stop (SIGTERM, then SIGKILL after timeout)
 benchmark/bench_framework.py — tool-call + needle + code-edit benchmark (stdlib-only)
-benchmark/control_test.py — minimal A/B control (stdlib-only)
-benchmark/speed_test.py   — decode speed measurement (single + 4-way concurrent)
+benchmark/control_test.py  — minimal A/B control (stdlib-only)
+benchmark/speed_test.py    — decode speed measurement (single + 4-way concurrent)
+```
+
+Lifecycle:
+```bash
+# environment defaults are set inside start.sh for the reference box
+MODEL_DIR=/absolute/path/... ./scripts/start.sh      # background, pidfile written
+./scripts/stop.sh                                     # drains, then SIGTERM/SIGKILL
 ```
 
 All benchmark scripts are `urllib`-only (no deps) and target an OpenAI-compatible
