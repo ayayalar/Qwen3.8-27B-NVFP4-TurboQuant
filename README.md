@@ -57,17 +57,64 @@ vllm serve /path/to/unsloth/Qwen3.8-27B-NVFP4 \
 | `--kv-cache-dtype fp8` at 262144 | Fails boot: needs 8.18 GiB, only ~7 GiB available → "estimated maximum model length is 227360". fp8 is fine at ≤ ~227K. |
 | `--gpu-memory-utilization 0.985+` | Exceeds free GPU memory at boot ("Free memory less than desired utilization"). `0.98` is the practical ceiling on a 32 GB card. |
 
-## Measured results (this configuration)
+## Benchmark results (validated 2026-08-14, this configuration)
 
-- **Context:** 262,144 advertized and served (`/v1/models` → `max_model_len 262144`).
-- **Long-context recall** (needle-in-haystack, unique filler, deterministic scoring):
-  ✅ 8K · ✅ 64K · ✅ 131K · ✅ 196K
-- **Agentic code-edit** (find `def double_value(x)` in a large doc, rewrite ×2→×4):
-  ✅ at 64K and ✅ at 131K — outputs `def double_value(x): return x * 4`
-- **Tool calling:** 10/12 structured calls with correct args (the 2 misses are a
-  model quirk: the same prompt refuses to call a tool in *any* config, incl. fp8).
-- **Decode speed:** ~55 tok/s single-stream; ~197 tok/s with 4 concurrent requests
-  (~49 tok/s each). Enforce-eager drops this to ~38/143 — keep graphs on.
+### Long-context recall — needle-in-haystack
+
+Deterministic probe: a unique `NEEDLE-XXXX <status>` marker sentence embedded at
+~60% depth in unique, non-repeating filler, scored substring-match against the
+`content` field. Reported per prompt-token count.
+
+| Prompt tokens | Result |
+|---:|---|
+| 8K | ✅ PASS |
+| 64K | ✅ PASS |
+| 131K | ✅ PASS |
+| 196K | ✅ PASS |
+
+### Agentic code-edit
+
+Prompt: locate `def double_value(x): return x * 2` inside a large document and
+rewrite it to multiply by 4. Scored on the emitted function line.
+
+| Prompt tokens | Result | Model output |
+|---:|---|---|
+| 64K | ✅ PASS | `def double_value(x): return x * 4` |
+| 131K | ✅ PASS | `def double_value(x): return x * 4` |
+
+### Tool calling
+
+12 structured-call tasks × 2 reps (web_search, send_email, book_flight, add,
+get_weather, search_files), scored on tool name + argument values.
+
+| Metric | Result |
+|---|---:|
+| Passing calls | 10 / 12 |
+| Verified args (correct tool + values) | 10 / 12 |
+
+The 2 misses (`book_flight`) produced no tool call at all — identical behavior on
+fp8/KV-pinned configs, i.e. a model quirk, not this recipe.
+
+### Decode throughput
+
+| Workload | Tokens/s |
+|---|---:|
+| Single request | ~55 |
+| 4 concurrent requests (aggregate) | ~197 |
+| Per-request under 4-way load | ~49 |
+
+`--enforce-eager` downgrades these to ~38 / ~143 — keep CUDA graphs on.
+
+### Benchmark provenance
+
+- Scripts: `benchmark/bench_framework.py` (recall + code-edit + tools),
+  `benchmark/control_test.py`, `benchmark/speed_test.py` — stdlib-only, hit
+  `POST /v1/chat/completions` on the served endpoint, no external deps.
+- All numbers measured on the reference hardware/software in
+  [Environment used for validation](#environment-used-for-validation) against
+  the *final* recipe flags (KV pinned, no MTP, CUDA graphs on).
+- Scoring caveats (why substring matching on `content` only, and not exact
+  matching on `reasoning`): see [CALIBRATION.md](CALIBRATION.md).
 
 ## Known quirks (read before wiring clients)
 
