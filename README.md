@@ -77,6 +77,9 @@ vllm serve /path/to/unsloth/Qwen3.8-27B-NVFP4 \
 - 4-bit KV is slightly lossier than fp8 at the extreme edge of the window. All
   structured tests here pass, but for fidelity-critical long-context recall you
   can trade context down (~227K) for fp8.
+- **TurboQuant kernel path** requires FlashAttention v2 in this vLLM build. The
+  launcher pins `--attention-config.flash_attn_version=2` explicitly so a future
+  vLLM upgrade can't silently pick FA3 and change decode behavior.
 - **No CPU offloading** — the whole point of this recipe is GPU-only. We never
   touch the 61 GB system RAM for serving, so don't add `--cpu-offload-gb`.
 

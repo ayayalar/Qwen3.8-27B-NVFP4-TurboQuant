@@ -34,6 +34,7 @@ rm -f "$PIDFILE"
   --max-num-seqs 4 \
   --max-num-batched-tokens 512 \
   --gpu-memory-utilization 0.98 \
+  --attention-config.flash_attn_version=2 \
   --enable-auto-tool-choice \
   --tool-call-parser qwen3_xml \
   --reasoning-parser qwen3 \
