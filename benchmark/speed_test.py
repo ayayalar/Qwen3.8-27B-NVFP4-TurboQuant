@@ -1,7 +1,7 @@
-import json, urllib.request, time, threading
+import json, os, urllib.request, time, threading
 
-URL="http://localhost:8000/v1/chat/completions"
-MODEL="unsloth/Qwen3.8-27B-NVFP4"
+URL = os.environ.get("BENCH_URL", "http://localhost:8000/v1/chat/completions")
+MODEL = os.environ.get("BENCH_MODEL", "unsloth/Qwen3.8-27B-NVFP4")
 
 def run(payload, results, idx):
     t0=time.time()

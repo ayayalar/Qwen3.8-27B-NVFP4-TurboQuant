@@ -198,6 +198,21 @@ All benchmark scripts are `urllib`-only (no deps) and target an OpenAI-compatibl
 see CALIBRATION.md for why naive exact-match scoring of reasoning-plus-content
 produces false negatives.
 
+To reproduce the published numbers, run the full suite against a live server
+(started by `scripts/start.sh`):
+
+```bash
+python3 benchmark/speed_test.py        # decode throughput (single + 4-way)
+python3 benchmark/control_test.py      # minimal smoke/control
+python3 benchmark/bench_framework.py t4   # tools + needles + code-edit (README suite)
+```
+
+The framework's `TAG` argument selects the length set — use a tag containing
+`t4` for the full suite (matches README), or `fp8`/anything else for the
+reduced ≤131K set. Endpoint/port/output are env-overridable (`BENCH_URL`,
+`BENCH_MODEL`, `BENCH_OUT`). Numbers in this README were re-verified
+2026-08-14 against the reference box (tool 10/12, all needles PASS, code-edit PASS).
+
 ## License
 
 MIT. The recipe, scripts, and measurements are free to reuse; the model weights

@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Minimal control: identical prompts, identical scoring, compare configs."""
-import json, urllib.request, random, sys
+"""Minimal control: identical prompts, identical scoring, compare configs.
+Endpoint is env-overridable (BENCH_URL), default localhost:8000."""
+import json, os, urllib.request, random, sys
 
-URL = "http://localhost:8000/v1/chat/completions"
-MODEL = "unsloth/Qwen3.8-27B-NVFP4"
+URL = os.environ.get("BENCH_URL", "http://localhost:8000/v1/chat/completions")
+MODEL = os.environ.get("BENCH_MODEL", "unsloth/Qwen3.8-27B-NVFP4")
 
 def call(payload, timeout=300):
     req = urllib.request.Request(URL, data=json.dumps(payload).encode(),

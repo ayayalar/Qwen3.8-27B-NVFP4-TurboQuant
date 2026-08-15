@@ -4,12 +4,20 @@ Scores only the final `content` field (never the reasoning trace),
 uses substring matching (the model is allowed to phrase naturally),
 gives enough max_tokens that a correct answer always fits.
 Outputs JSON + a human summary.
-"""
-import json, random, urllib.request, sys, time
 
-URL = "http://localhost:8000/v1/chat/completions"
-MODEL = "unsloth/Qwen3.8-27B-NVFP4"
-OUT = "/tmp/bench_results.json"
+Usage:  python3 bench_framework.py [TAG]
+  TAG controls which lengths run (see main()):
+    - a tag containing "t4"  -> full-length suite (1x 196K needle, code-edit)
+      This matches the numbers published in README: run `python3 bench_framework.py t4`.
+    - a tag containing "fp8" -> lengths <= 131072 only (fp8 can't reach 262144)
+    - any other tag          -> the same reduced set as fp8
+  Endpoint/port and output file are env-overridable (see below).
+"""
+import json, os, random, urllib.request, sys, time
+
+URL = os.environ.get("BENCH_URL", "http://localhost:8000/v1/chat/completions")
+MODEL = os.environ.get("BENCH_MODEL", "unsloth/Qwen3.8-27B-NVFP4")
+OUT = os.environ.get("BENCH_OUT", "/tmp/bench_results.json")
 
 
 def call(payload, timeout=900):
@@ -131,17 +139,13 @@ CODE_Q = ("Edit the Python function named double_value in the document so it "
 
 
 def score_codeedit(content):
-    c = content
-    if "x * 2" in c and "x * 4" in c:  # edits are relative: check final call
-        pass
-    # The function must be present and must multiply by 4, not 2.
-    has4 = ("x * 4" in c) or ("x*4" in c)
-    # If it contains x * 2 it must also contain x * 4 (i.e. edit performed)
-    if "x * 2" in c and "x * 4" not in c.replace("x * 2", ""):
-        ok2 = False
-    else:
-        ok2 = True
-    return has4 and ok2
+    # The model is allowed to output ONLY the edited line (README documents the
+    # expected canonical output). Pass if it multiplied by 4, and did not leave
+    # a stale *2 line behind while also claiming an edit.
+    has4 = ("x * 4" in content) or ("x*4" in content)
+    if "x * 2" in content and "x * 4" not in content.replace("x * 2", ""):
+        return False
+    return has4
 
 
 def main():
