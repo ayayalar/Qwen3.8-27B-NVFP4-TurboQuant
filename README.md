@@ -10,6 +10,37 @@ working tool-calling and long-context reliability.
 > See [CALIBRATION.md](CALIBRATION.md) for the full rejection log — several
 > "obvious" configs look correct and silently degrade the model.
 
+## QuickStart
+
+Requirements: a 32 GB (or larger) NVIDIA GPU, ~50 GB free disk (model weights
+~22 GiB + CUDA/torch install), and either `uv` or `python3` available. All
+scripts are idempotent and `$HOME`-relative (no hardcoded usernames); see the
+`Files` section for environment-variable overrides.
+
+```bash
+git clone https://github.com/ayayalar/Qwen3.8-27B-NVFP4-TurboQuant.git
+cd Qwen3.8-27B-NVFP4-TurboQuant
+
+# 1. One-time bootstrap: creates the vLLM venv and downloads the model (~22 GiB).
+#    Safe to re-run; skips anything already in place.
+./scripts/setup.sh
+
+# 2. Start the server (background, pidfile + log in /tmp)
+./scripts/start.sh
+
+# 3. Smoke-test against the OpenAI-compatible endpoint
+curl http://localhost:8000/v1/models
+
+# 4. Stop the server (graceful drain, then SIGTERM/SIGKILL fallback)
+./scripts/stop.sh
+```
+
+Most users never need to touch any flag — `start.sh` already carries the
+validated configuration. Override paths/ports with environment variables
+(`MODEL_DIR`, `VLLM_BIN`, `PORT`, …) only if your setup differs from the
+defaults. The full manual launch command, with the reasoning for every flag,
+is below.
+
 ## Constraints that shape this config
 
 A 27B model at NVFP4 still occupies **~22.1 GiB** of the 5090's 31.4 GiB usable
