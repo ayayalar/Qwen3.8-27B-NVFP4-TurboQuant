@@ -7,10 +7,10 @@
 #   or short: ./start.sh "PATH [PORT]"
 set -u
 
-MODEL_DIR="${MODEL_DIR:-/home/ayayalar/models/unsloth/Qwen3.8-27B-NVFP4}"
+MODEL_DIR="${MODEL_DIR:-$HOME/models/unsloth/Qwen3.8-27B-NVFP4}"
 SERVED_NAME="${SERVED_NAME:-unsloth/Qwen3.8-27B-NVFP4}"
 PORT="${PORT:-8000}"
-VLLM_BIN="${VLLM_BIN:-/home/ayayalar/unsloth-nvfp4-env/bin/vllm}"
+VLLM_BIN="${VLLM_BIN:-$HOME/unsloth-nvfp4-env/bin/vllm}"
 LOGFILE="${LOGFILE:-/tmp/qwen38_vllm.log}"
 PIDFILE="${PIDFILE:-/tmp/qwen38_vllm.pid}"
 

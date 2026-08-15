@@ -138,7 +138,7 @@ fp8/KV-pinned configs, i.e. a model quirk, not this recipe.
   unsloth's install instructions: `uv pip install "vllm>=0.25.0"
   "flashinfer-python>=0.6.13" "nvidia-cutlass-dsl>=4.5.2" --torch-backend=auto`)
 - Model: `unsloth/Qwen3.8-27B-NVFP4` downloaded via `hf download` to
-  `/home/ayayalar/models/unsloth/Qwen3.8-27B-NVFP4`
+  `$HOME/models/unsloth/Qwen3.8-27B-NVFP4`
 
 ## Files
 
@@ -152,7 +152,7 @@ benchmark/speed_test.py    — decode speed measurement (single + 4-way concurre
 
 Lifecycle:
 ```bash
-# environment defaults are set inside start.sh for the reference box
+# defaults resolve under $HOME (portable across machines); override with env vars
 MODEL_DIR=/absolute/path/... ./scripts/start.sh      # background, pidfile written
 ./scripts/stop.sh                                     # drains, then SIGTERM/SIGKILL
 ```
