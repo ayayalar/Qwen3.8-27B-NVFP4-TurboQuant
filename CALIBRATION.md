@@ -10,10 +10,15 @@ with the observation that killed each one. This is the raw material behind the
 ```
 vllm serve ... --max-model-len 262144 --kv-cache-dtype fp8 [--gpu-memory-utilization 0.98]
 ```
-→ `ValueError: To serve ... max seq len (262144), (8.18 GiB KV cache is needed,
-larger than the available KV cache memory (6.01 GiB). Estimated max model length 203840`.
-Model weights (22.13 GiB) + vision encoder cache + runtime overhead leave only
-~6–7 GiB. Adding MTP to this config *shrank* available KV further (5.84 GiB).
+→ `ValueError: To serve at least one request with the model's max seq len (262144),
+(8.18 GiB KV cache is needed, which is larger than the available KV cache memory
+(6.66 GiB). Based on the available memory, the estimated maximum model length is 213248`.
+
+Model loading took 21.34 GiB; the vision encoder cache + runtime overhead leave
+only ~5–7 GiB of KV headroom. The exact "estimated max length" varies with the
+available memory at boot time — we captured 158,368 (this load, KV pinned to
+5 GiB), 213,248 (no pin), and earlier runs reported 203,840 / 227,360. What is
+stable is the direction: fp8 cannot serve 262,144 on this card.
 
 ### 2. `--kv-cache-dtype nvfp4` (4-bit, but no backend)
 ```
@@ -34,8 +39,12 @@ Served fine at boot (it boots *cleanly* — that's the trap), but output was gar
 - needle recall → empty, reasoning loop `think think think ...`
 
 Reproduced at 262144 with turboquant (both fp8 KV and 4-bit KV), with and without
-the KV pin. Conclusion: **MTP + this model's KV path is the garbler, not the KV
-quant itself.** Same weights + same KV dtype *without* MTP generate cleanly.
+the KV pin. **Re-verified live on 2026-08-14 (this edit):** an MTP boot with 4-bit
+KV hit **125.8 tok/s single-stream** (vs 55 without MTP) and returned **empty
+`content`**, then a 4-way concurrent burst crashed the engine with `CUDA error:
+illegal memory access` (HTTP 500s) — MTP trades ~2.3× decode speed for broken
+output under load. Conclusion: **MTP + this model's KV path is the garbler, not
+the KV quant itself.** Same weights + same KV dtype *without* MTP generate cleanly.
 
 ### 4. kv-cache-memory-bytes (pin) ALONE with MTP still garbled
 Pinning KV (5 GiB) + MTP: boots, 270,510-token pool (still > 256K), but every
@@ -44,8 +53,8 @@ control output empty / no tool call / no recall. Confirms #3 is unconditional on
 ### 5. `--num-gpu-blocks-override` gymnastics
 Tried to force KV allocation (2800/2700/1370/1200 blocks). Runs into the same
 physically-over-committed memory as fp8: at 2800 blocks vLLM tried to allocate
-8.38 GiB on a card already holding 22.3 GiB of weights + torch.compile buffers →
-`torch.OutOfMemoryError` during `initialize_kv_cache_tensors`. The *pin* is the
+8.38 GiB on a card already holding ~21.3 GiB of loaded weights + torch.compile
+buffers → `torch.OutOfMemoryError` during `initialize_kv_cache_tensors`. The *pin* is the
 clean equivalent of override without the landmine, because it tells the allocator
 exactly how much to reserve.
 
@@ -54,6 +63,10 @@ Without a KV pin, auto-fit grabs 1.66× the needed pool (435,924 tokens / 7.11 G
 and long requests (120–170K) died: `CUDA out of memory. Tried to allocate 190 MiB`
 — the card was 100% committed. (This is also the minefield-registry "KV sizing"
 class of failure.) Removing enforce-eager alone doesn't fix that; the pin does.
+
+Re-measured 2026-08-14 (this edit): with the pin in place and `--enforce-eager`,
+single-stream decode drops from 54.8 → 39.5 tok/s and 4-way aggregate from
+196.9 → 150.8 tok/s (~28% slower). CUDA graphs are worth keeping.
 
 ## What the final config changed vs each failure
 
@@ -64,7 +77,7 @@ class of failure.) Removing enforce-eager alone doesn't fix that; the pin does.
 | NVFP4 KV unsupported | not used; 4-bit turboquant used instead |
 | auto-fit overallocates → OOM | `--kv-cache-memory-bytes 5368709120` (5 GiB pinned) |
 | OOM during override | pin replaces block-override |
-| slow decode | CUDA graphs kept ON (no enforce-eager) — 43% faster |
+| slow decode | CUDA graphs kept ON (no enforce-eager) — ~28% faster (re-measured 2026-08-14; earlier log noted 43%) |
 
 ## Benchmark harness bugs we hit (worked through, not config bugs)
 

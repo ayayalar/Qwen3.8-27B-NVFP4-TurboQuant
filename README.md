@@ -12,8 +12,8 @@ working tool-calling and long-context reliability.
 
 ## QuickStart
 
-Requirements: a 32 GB (or larger) NVIDIA GPU, ~50 GB free disk (model weights
-~22 GiB + CUDA/torch install), and either `uv` or `python3` available. All
+Requirements: a 32 GB (or larger) NVIDIA GPU, ~35 GB free disk (model weights
+~22 GiB + vLLM/torch venv ~8 GiB), and `uv` or `python3` available. All
 scripts are idempotent and `$HOME`-relative (no hardcoded usernames); see the
 `Files` section for environment-variable overrides.
 
@@ -43,15 +43,16 @@ is below.
 
 ## Constraints that shape this config
 
-A 27B model at NVFP4 still occupies **~22.1 GiB** of the 5090's 31.4 GiB usable
-VRAM. The native 256K window needs ~8.2 GiB of fp8 KV cache, i.e. more than the
-~7 GiB that remains after weights. You cannot simply "set a bigger context" —
+A 27B model at NVFP4 occupies **~21.3 GiB** of the 5090's 31.8 GiB VRAM after
+load (measured `Model loading took 21.34 GiB`; checkpoint is 21.81 GiB on disk).
+The native 256K window needs ~8.18 GiB of fp8 KV cache, more than the ~6–7 GiB
+that remains after weights + runtime. You cannot simply "set a bigger context" —
 naive attempts politely refuse at boot or OOM at the first long request.
 
 The recipe that works combines three non-obvious choices:
 
 1. **4-bit KV cache** (`turboquant_4bit_nc`) instead of fp8 — halves KV footprint
-   so a full 256K window fits. (fp8 caps out around ~227K on this card.)
+   so a full 256K window fits. (fp8 only reaches ≤ ~200K on this card.)
 2. **KV cache pinned in bytes** (`--kv-cache-memory-bytes 5GiB`) instead of the
    auto-fitter. Auto-fit over-reserved a 1.66× oversized pool (435K tokens),
    leaving ~0 MB for prefill activations → long requests died with
@@ -81,11 +82,11 @@ vllm serve /path/to/unsloth/Qwen3.8-27B-NVFP4 \
 
 | Flag | Why not |
 |---|---|
-| MTP spec-decode (`--speculative-config {mtp, num_speculative_tokens:2}`) | **Garbles output with 4-bit KV** — empty `content`, no tool calls, degeneration into token repetition ("a a a a…"). Verified multiple times, with and without KV pin. The model ships `model_mtp.safetensors`, so this is tempting — don't. Save ~40% speed by removing it. |
+| MTP spec-decode (`--speculative-config {mtp, num_speculative_tokens:2}`) | **With 4-bit KV: garbled output or crash.** In our live A/B, an MTP boot extrapolated to **125.8 tok/s** (vs 55 without it) but the single request returned **empty `content`**, and a 4-way concurrent load then **died with `CUDA error: illegal memory access` → 500s**. The model ships `model_mtp.safetensors`, so this is tempting — don't. You give up ~2.3× raw decode speed for correctness. |
 | `--kv-cache-dtype nvfp4` | No vLLM attention backend supports NVFP4 KV on this GPU — fails at boot with "No valid attention backend found" listing every backend rejecting it. |
 | `--kv-cache-dtype turboquant_4bit_nc` + MTP | Same garble as MTP above. |
-| `--enforce-eager` | Not needed *once KV is pinned* — costs CUDA graphs + torch.compile (≈43% decode speed). Only keep it if you are OOM-ing with auto-fit. |
-| `--kv-cache-dtype fp8` at 262144 | Fails boot: needs 8.18 GiB, only ~7 GiB available → "estimated maximum model length is 227360". fp8 is fine at ≤ ~227K. |
+| `--enforce-eager` | Not needed *once KV is pinned* — costs CUDA graphs + torch.compile (re-measured 2026-08-14: ≈28% slower decode). Only keep it if you are OOM-ing with auto-fit. |
+| `--kv-cache-dtype fp8` at 262144 | Fails boot: needs 8.18 GiB at 262144; available KV memory varies by boot state (measured 5.0–6.66 GiB → vLLM's "estimated max length" landed at 158,368 / 213,248 / 203,840 / 227,360 on different runs). fp8 is only usable at ≤ ~200K on this card. |
 | `--gpu-memory-utilization 0.985+` | Exceeds free GPU memory at boot ("Free memory less than desired utilization"). `0.98` is the practical ceiling on a 32 GB card. |
 
 ## Benchmark results (validated 2026-08-14, this configuration)
@@ -134,7 +135,7 @@ fp8/KV-pinned configs, i.e. a model quirk, not this recipe.
 | 4 concurrent requests (aggregate) | ~197 |
 | Per-request under 4-way load | ~49 |
 
-`--enforce-eager` downgrades these to ~38 / ~143 — keep CUDA graphs on.
+`--enforce-eager` downgrades these to ~40 / ~151 (re-measured, see CALIBRATION) — keep CUDA graphs on.
 
 ### Benchmark provenance
 
@@ -154,7 +155,7 @@ fp8/KV-pinned configs, i.e. a model quirk, not this recipe.
   both. (`--reasoning-parser qwen3` extracts thinking into a separate field.)
 - 4-bit KV is slightly lossier than fp8 at the extreme edge of the window. All
   structured tests here pass, but for fidelity-critical long-context recall you
-  can trade context down (~227K) for fp8.
+  can trade context down (~200K, the fp8 ceiling on this card) for fp8.
 - **TurboQuant kernel path** requires FlashAttention v2 in this vLLM build. The
   launcher pins `--attention-config.flash_attn_version=2` explicitly so a future
   vLLM upgrade can't silently pick FA3 and change decode behavior.
@@ -174,7 +175,7 @@ fp8/KV-pinned configs, i.e. a model quirk, not this recipe.
 ## Files
 
 ```
-scripts/setup.sh           — download the model (~22 GiB) if not present (idempotent)
+scripts/setup.sh           — one-time bootstrap: create vLLM env + download model (~22 GiB), idempotent
 scripts/start.sh           — start the server in the background (pidfile + log)
 scripts/stop.sh            — graceful stop (SIGTERM, then SIGKILL after timeout)
 benchmark/bench_framework.py — tool-call + needle + code-edit benchmark (stdlib-only)
@@ -184,8 +185,8 @@ benchmark/speed_test.py    — decode speed measurement (single + 4-way concurre
 
 Lifecycle:
 ```bash
-# one-time: install the vLLM env (see "Environment used for validation") then fetch the weights
-./scripts/setup.sh                                   # downloads unsloth/Qwen3.8-27B-NVFP4 if absent
+# one-time bootstrap: creates the vLLM venv and downloads the weights if missing
+./scripts/setup.sh                                   # idempotent — safe to re-run
 
 # defaults resolve under $HOME (portable across machines); override with env vars
 MODEL_DIR=/absolute/path/... ./scripts/start.sh      # background, pidfile written
