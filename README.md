@@ -14,7 +14,7 @@ working tool-calling and long-context reliability.
 
 Requirements: a 32 GB (or larger) NVIDIA GPU, ~35 GB free disk (model weights
 ~22 GiB + vLLM/torch venv ~8 GiB), and `uv` or `python3` available. All
-scripts are idempotent and `$HOME`-relative (no hardcoded usernames); see the
+scripts are idempotent and `$HOME`-relative; see the
 `Files` section for environment-variable overrides.
 
 ```bash
