@@ -143,8 +143,9 @@ fp8/KV-pinned configs, i.e. a model quirk, not this recipe.
 ## Files
 
 ```
-scripts/start.sh            — start the server in the background (pidfile + log)
-scripts/stop.sh             — graceful stop (SIGTERM, then SIGKILL after timeout)
+scripts/setup.sh           — download the model (~22 GiB) if not present (idempotent)
+scripts/start.sh           — start the server in the background (pidfile + log)
+scripts/stop.sh            — graceful stop (SIGTERM, then SIGKILL after timeout)
 benchmark/bench_framework.py — tool-call + needle + code-edit benchmark (stdlib-only)
 benchmark/control_test.py  — minimal A/B control (stdlib-only)
 benchmark/speed_test.py    — decode speed measurement (single + 4-way concurrent)
@@ -152,6 +153,9 @@ benchmark/speed_test.py    — decode speed measurement (single + 4-way concurre
 
 Lifecycle:
 ```bash
+# one-time: install the vLLM env (see "Environment used for validation") then fetch the weights
+./scripts/setup.sh                                   # downloads unsloth/Qwen3.8-27B-NVFP4 if absent
+
 # defaults resolve under $HOME (portable across machines); override with env vars
 MODEL_DIR=/absolute/path/... ./scripts/start.sh      # background, pidfile written
 ./scripts/stop.sh                                     # drains, then SIGTERM/SIGKILL

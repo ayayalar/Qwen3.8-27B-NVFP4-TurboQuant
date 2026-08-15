@@ -18,6 +18,15 @@ PIDFILE="${PIDFILE:-/tmp/qwen38_vllm.pid}"
 [ $# -ge 1 ] && MODEL_DIR="$1"
 [ $# -ge 2 ] && PORT="$2"
 
+# The model must already be on disk — this recipe does not auto-fetch.
+# Run scripts/setup.sh to download it.
+if [ ! -f "$MODEL_DIR/config.json" ] || [ ! -f "$MODEL_DIR/model.safetensors" ]; then
+  echo "error: model files not found in $MODEL_DIR" >&2
+  echo "  run scripts/setup.sh to download unsloth/Qwen3.8-27B-NVFP4" >&2
+  echo "  or set MODEL_DIR to an existing local copy" >&2
+  exit 1
+fi
+
 if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
   echo "already running (pid $(cat "$PIDFILE")) — stop first if you want to restart"
   exit 0
