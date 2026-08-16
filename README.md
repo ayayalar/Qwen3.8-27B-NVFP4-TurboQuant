@@ -192,19 +192,12 @@ Lifecycle:
 MODEL_DIR=/absolute/path/... ./scripts/start.sh      # background, pidfile written
 ./scripts/stop.sh                                     # drains, then SIGTERM/SIGKILL
 
-# OPTIONAL: enable MTP speculative decoding (~1.8x single-stream decode speed,
-# verified correct on 0.27.1 across the full 262K window; start.sh sets the
-# expandable-segments allocator required for long context — see CALIBRATION §3)
-MTP=1 ./scripts/start.sh
+# MTP speculative decoding is ON by default (~1.8x single-stream decode speed,
+# verified correct at full 262K on 0.27.1). Disable with:
+MTP=0 ./scripts/start.sh
 ```
 
-`MTP=1` changes two things under the hood (both verified necessary): it adds
-`--speculative-config '{"method":"mtp","num_speculative_tokens":3,"num_speculative_tokens_per_batch_size":[[1,4,3]]}'`
-and raises the KV pin from 5 GiB to 5.4 GiB. The dynamic
-`num_speculative_tokens_per_batch_size` key is what makes vLLM step CUDA-graph
-mode from `FULL_AND_PIECEWISE` to `PIECEWISE`; the FULL capture path corrupts
-turboquant-KV output under speculation on 0.27.1 (see CALIBRATION.md). Plain
-`./scripts/start.sh` keeps the original validated non-spec configuration.
+`scripts/start.sh` runs with speculative decoding (dynamic `num_speculative_tokens_per_batch_size` → vLLM steps cudagraph from `FULL_AND_PIECEWISE` to `PIECEWISE`; the FULL capture path corrupts turboquant-KV output under speculation on 0.27.1 — see CALIBRATION.md §3) and sets `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` (required for the full-262K window under MTP). `MTP=0` restores the original non-spec configuration verbatim: 5 GiB KV pin, no speculation, no allocator override.
 
 All benchmark scripts are `urllib`-only (no deps) and target an OpenAI-compatible
 `/v1` endpoint. Scoring is substring-based and scores the **content** field only —

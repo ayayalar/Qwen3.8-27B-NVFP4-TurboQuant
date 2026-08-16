@@ -6,7 +6,8 @@
 # Usage:  ./start.sh [--model-dir PATH] [--port N] [--served-name NAME]
 #   or short: ./start.sh "PATH [PORT]"
 #
-# Optional: MTP=1 enables speculative decoding (~1.8x single-stream decode speed).
+# Optional: MTP=0 disables speculative decoding (default ON; ~1.8x single-stream
+# decode speed, verified correct at full 262K on 0.27.1).
 #   It MUST be combined with dynamic speculation (num_speculative_tokens_per_batch_size)
 #   so vLLM steps cudagraphs from FULL_AND_PIECEWISE to PIECEWISE; on 0.27.1 the
 #   FULL-mode spec-verify path corrupts turboquant KV output (see CALIBRATION.md).
@@ -19,7 +20,7 @@ PORT="${PORT:-8000}"
 VLLM_BIN="${VLLM_BIN:-$HOME/unsloth-nvfp4-env/bin/vllm}"
 LOGFILE="${LOGFILE:-/tmp/qwen38_vllm.log}"
 PIDFILE="${PIDFILE:-/tmp/qwen38_vllm.pid}"
-MTP="${MTP:-0}"
+MTP="${MTP:-1}"
 
 # Positional shorthand: ./start.sh /abs/model/dir [port]
 [ $# -ge 1 ] && MODEL_DIR="$1"
