@@ -82,9 +82,9 @@ vllm serve /path/to/unsloth/Qwen3.8-27B-NVFP4 \
 
 | Flag | Why not |
 |---|---|
-| MTP spec-decode (`--speculative-config {mtp, num_speculative_tokens:2}`) | **With 4-bit KV: garbled output or crash.** In our live A/B, an MTP boot extrapolated to **125.8 tok/s** (vs 55 without it) but the single request returned **empty `content`**, and a 4-way concurrent load then **died with `CUDA error: illegal memory access` → 500s**. The model ships `model_mtp.safetensors`, so this is tempting — don't. You give up ~2.3× raw decode speed for correctness. |
+| MTP spec-decode (`--speculative-config {mtp, num_speculative_tokens:3}`) | **Works on 0.27.1 only with the caveats documented in CALIBRATION §3.** Naïve use (static K3 + default FULL CUDA graphs) garbles output — we saw 125.8 tok/s with empty `content` and an eventual `CUDA error: illegal memory access`. That was the FULL-cudagraph spec-verify bug, not MTP itself. Use it as `MTP=1` in `scripts/start.sh` (dynamic spec → PIECEWISE graphs + expandable-segments allocator): correct across the full 262K window, ~1.8× decode, tools 12/12. Otherwise the plain config stays at ~55 tok/s. |
 | `--kv-cache-dtype nvfp4` | No vLLM attention backend supports NVFP4 KV on this GPU — fails at boot with "No valid attention backend found" listing every backend rejecting it. |
-| `--kv-cache-dtype turboquant_4bit_nc` + MTP | Same garble as MTP above. |
+| `--kv-cache-dtype turboquant_4bit_nc` + MTP | Only garbles under **FULL** CUDA graphs; correct under PIECEWISE (see row above / CALIBRATION §3). |
 | `--enforce-eager` | Not needed *once KV is pinned* — costs CUDA graphs + torch.compile (re-measured 2026-08-14: ≈28% slower decode). Only keep it if you are OOM-ing with auto-fit. |
 | `--kv-cache-dtype fp8` at 262144 | Fails boot: needs 8.18 GiB at 262144; available KV memory varies by boot state (measured 5.0–6.66 GiB → vLLM's "estimated max length" landed at 158,368 / 213,248 / 203,840 / 227,360 on different runs). fp8 is only usable at ≤ ~200K on this card. |
 | `--gpu-memory-utilization 0.985+` | Exceeds free GPU memory at boot ("Free memory less than desired utilization"). `0.98` is the practical ceiling on a 32 GB card. |
@@ -192,8 +192,8 @@ Lifecycle:
 MODEL_DIR=/absolute/path/... ./scripts/start.sh      # background, pidfile written
 ./scripts/stop.sh                                     # drains, then SIGTERM/SIGKILL
 
-# OPTIONAL: enable MTP speculative decoding (~3x single-stream decode speed,
-# verified correct on 0.27.1 up to the full 262K window; start.sh sets the
+# OPTIONAL: enable MTP speculative decoding (~1.8x single-stream decode speed,
+# verified correct on 0.27.1 across the full 262K window; start.sh sets the
 # expandable-segments allocator required for long context — see CALIBRATION §3)
 MTP=1 ./scripts/start.sh
 ```

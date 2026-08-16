@@ -47,10 +47,14 @@ capture artifact, not the KV dtype. With `FULL_AND_PIECEWISE` cudagraph mode (th
 tokens get rejected every time (`Accepted: 0`, `Per-position acceptance rate:
 0.000`) and long-context output collapses. **Stepping CUDA graphs to PIECEWISE
 (no FULL capture) makes MTP+turboquant fully correct** — math, tool calls, and
-needle recall pass, with MTP accepting drafts (~50–62%):
-- single-stream decode: **166.9 tok/s** (vs 54.8 non-spec) at full 262,144
-- 4-way concurrent: **206.3 tok/s aggregate** (vs 196.9 non-spec)
-- needles 64K / 131K / 196K: all PASS, marker in `content`
+needle recall pass, with MTP accepting drafts:
+- single-stream decode: **~97–103 tok/s** (official `speed_test.py` = 96.8;
+  vs 54.8 non-spec, i.e. ~1.8×) at full 262,144. *Earlier "166.9" claims were a
+  measurement artifact — wall-time divided by requested max_tokens (500) instead
+  of actual completion tokens (~314). The harness-consistent number is ~100.*
+- 4-way concurrent: **~306–311 tok/s aggregate** (official harness; vs 196.9 non-spec)
+- needles 8K / 64K / 131K / 196K all PASS (marker in `content`); tools 12/12
+  vs 10/12 non-spec; code-edit PASS
 
 Two equivalent ways to get PIECEWISE on 0.27.1 (no source patch needed):
 1. `--enforce-eager` (PIECEWISE→NONE, costs ~40% decode — works, ~99 tok/s), or

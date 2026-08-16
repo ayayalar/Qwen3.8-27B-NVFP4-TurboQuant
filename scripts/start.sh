@@ -6,7 +6,7 @@
 # Usage:  ./start.sh [--model-dir PATH] [--port N] [--served-name NAME]
 #   or short: ./start.sh "PATH [PORT]"
 #
-# Optional: MTP=1 enables speculative decoding (~3x single-stream decode speed).
+# Optional: MTP=1 enables speculative decoding (~1.8x single-stream decode speed).
 #   It MUST be combined with dynamic speculation (num_speculative_tokens_per_batch_size)
 #   so vLLM steps cudagraphs from FULL_AND_PIECEWISE to PIECEWISE; on 0.27.1 the
 #   FULL-mode spec-verify path corrupts turboquant KV output (see CALIBRATION.md).
