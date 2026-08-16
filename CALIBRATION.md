@@ -135,6 +135,13 @@ single-stream decode drops from 54.8 → 39.5 tok/s and 4-way aggregate from
 - **Exact-match scoring false-fails** a model that paraphrases ("quantum computing
   articles" ≠ "quantum computing") — substring matching is the fair metric.
 - **Tiny `max_tokens` truncates content** while the real answer is in `reasoning`.
+- **`enable_thinking:false` collapses the counting-prompt benchmark.** With
+  thinking off, the model emits `1` (2 completion tokens) and stops — the
+  harness's long-output counting prompt only sustains generation *because* of
+  thinking, so "24 tok/s" there is 2 tokens ÷ request overhead, not a real
+  decode slowdown. Any thinking-off throughput comparison must force a long
+  output (e.g. `ignore_eos` + high `min_tokens` or a genuinely long prompt);
+  raw per-token decode is not faster with thinking off.
 - Note the `bench_framework` config guard: for "fp8"-tag runs it only tests
   lengths ≤ 131072 (because fp8 can't reach 262144).
 
