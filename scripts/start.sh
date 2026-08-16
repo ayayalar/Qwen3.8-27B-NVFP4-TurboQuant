@@ -48,6 +48,10 @@ rm -f "$PIDFILE"
 SPEC_ARGS=()
 if [ "$MTP" = "1" ]; then
   SPEC_ARGS=(--speculative-config '{"method":"mtp","num_speculative_tokens":3,"num_speculative_tokens_per_batch_size":[[1,4,3]]}')
+  # The turboquant continuation-prefill materializes the full dequantized K
+  # tensor; under MTP the extreme window (e.g. 196K) OOMs without the
+  # expandable-segments allocator (verified live 2026-08-15).
+  export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
 fi
 "$VLLM_BIN" serve "$MODEL_DIR" \
   --host 0.0.0.0 \

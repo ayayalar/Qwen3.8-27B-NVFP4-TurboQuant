@@ -193,8 +193,8 @@ MODEL_DIR=/absolute/path/... ./scripts/start.sh      # background, pidfile writt
 ./scripts/stop.sh                                     # drains, then SIGTERM/SIGKILL
 
 # OPTIONAL: enable MTP speculative decoding (~3x single-stream decode speed,
-# verified correct on 0.27.1 up to ~131K context; note the extreme 196K window
-# OOMs in the turboquant continuation-prefill path — see CALIBRATION.md §3)
+# verified correct on 0.27.1 up to the full 262K window; start.sh sets the
+# expandable-segments allocator required for long context — see CALIBRATION §3)
 MTP=1 ./scripts/start.sh
 ```
 
