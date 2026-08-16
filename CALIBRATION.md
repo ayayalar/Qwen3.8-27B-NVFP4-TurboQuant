@@ -60,6 +60,17 @@ Two equivalent ways to get PIECEWISE on 0.27.1 (no source patch needed):
    downgrades FULL→PIECEWISE with a warning ("for reliability"). This is the
    supported route and what `MTP=1` in `scripts/start.sh` uses.
 
+Official `benchmark/bench_framework.py t4` results with `MTP=1` (full suite,
+live 2026-08-15): tool calls **12/12** (vs 10/12 non-spec), needles 8K/64K/131K
+PASS. **Extreme-window caveat:** the 196K needle OOMs the engine in
+`TurboQuantAttentionImpl._continuation_prefill` (`k_full[:cached_len] =
+k_cached_trim.to(qdtype)` → `torch.OutOfMemoryError`, 414 MiB needed vs 414 MiB
+free at 211K computed tokens). The turboquant continuation-prefill materializes
+the full dequantized K-tensor, which under MTP's extra draft/verify buffers
+leaves zero headroom at the extreme edge — a vLLM memory-path issue, not fake
+output. So treat `MTP=1` as verified to ~131K; the no-MTP config remains the
+one proven across the full 262K window (including 196K/242K needles).
+
 The open upstream PR #40914 ([K+1 spec-verify routing]) targets the same class
 of bug but its dispatch predicate never fires on 0.27.1 (verified: 0/3508
 calls eligible) — the PIECEWISE/dynamic-SD route is what actually fixes it on
