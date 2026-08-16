@@ -144,7 +144,7 @@ those calls.
 
 | Workload | Tokens/s |
 |---|---:|
-| Single request (default) | ~148 |
+| Single request (default) | ~148.5 |
 | Single request (`MNBT=512`) | ~97 |
 | 4 concurrent requests (aggregate, default) | ~331 |
 | 4 concurrent requests (aggregate, `MNBT=512`) | ~310 |
