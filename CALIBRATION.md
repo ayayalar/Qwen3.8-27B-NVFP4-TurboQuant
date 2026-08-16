@@ -114,7 +114,7 @@ single-stream decode drops from 54.8 → 39.5 tok/s and 4-way aggregate from
 | Failure | Final config element that resolves it |
 |---|---|
 | fp8 KV doesn't fit | `turboquant_4bit_nc` halves KV bytes/token |
-| MTP garbles 4-bit output | MTP removed entirely (`--speculative-config` absent) |
+| MTP garbles 4-bit output | run MTP under PIECEWISE graphs (dynamic spec-decode; `MTP=1`) |
 | NVFP4 KV unsupported | not used; 4-bit turboquant used instead |
 | auto-fit overallocates → OOM | `--kv-cache-memory-bytes 5368709120` (5 GiB pinned) |
 | OOM during override | pin replaces block-override |

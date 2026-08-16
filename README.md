@@ -53,38 +53,49 @@ The recipe that works combines three non-obvious choices:
 
 1. **4-bit KV cache** (`turboquant_4bit_nc`) instead of fp8 — halves KV footprint
    so a full 256K window fits. (fp8 only reaches ≤ ~200K on this card.)
-2. **KV cache pinned in bytes** (`--kv-cache-memory-bytes 5GiB`) instead of the
+2. **KV cache pinned in bytes** (`--kv-cache-memory-bytes`) instead of the
    auto-fitter. Auto-fit over-reserved a 1.66× oversized pool (435K tokens),
    leaving ~0 MB for prefill activations → long requests died with
-   `CUDA out of memory`. Pinning to 5 GiB yields 306K tokens of KV (1.17× a max
-   request) plus activation headroom.
-3. **MTP speculative decoding OFF.** This is the counterintuitive one — see below.
+   `CUDA out of memory`. Pinning keeps exactly enough KV (see CALIBRATION)
+   plus activation headroom.
+3. **MTP speculative decoding must run under PIECEWISE CUDA graphs.** This is
+   the counterintuitive one — see below. Naive MTP (static K, FULL graphs)
+   garbles output; the corrected path (`MTP=1` in start.sh: dynamic spec →
+   PIECEWISE graphs + expandable-segments) is verified correct and ~1.8×
+   faster than no-MTP.
 
 ## The recipe
 
+As shipped, `scripts/start.sh` runs the full validated configuration including
+MTP (dynamic K3 spec-decode). The equivalent manual command is:
+
 ```bash
 vllm serve /path/to/unsloth/Qwen3.8-27B-NVFP4 \
-  --host 0.0.0.0 \
-  --port 8000 \
+  --host 0.0.0.0 --port 8000 \
   --served-model-name unsloth/Qwen3.8-27B-NVFP4 \
   --max-model-len 262144 \
   --kv-cache-dtype turboquant_4bit_nc \
-  --kv-cache-memory-bytes 5368709120 \    # 5 GiB, pinned (see calibration)
+  --kv-cache-memory-bytes 5800000000 \                    # 5.4 GiB pinned (MTP)
   --max-num-seqs 4 \
   --max-num-batched-tokens 512 \
   --gpu-memory-utilization 0.98 \
-  --enable-auto-tool-choice \
-  --tool-call-parser qwen3_xml \
-  --reasoning-parser qwen3
+  --attention-config.flash_attn_version=2 \
+  --speculative-config '{"method":"mtp","num_speculative_tokens":3,"num_speculative_tokens_per_batch_size":[[1,4,3]]}' \
+  --enable-auto-tool-choice --tool-call-parser qwen3_xml --reasoning-parser qwen3
 ```
 
-**Deliberately NOT used** (each item is a failed or harmful alternative):
+`PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` is required for the 262K
+window under MTP (set automatically by `scripts/start.sh`). Dropping the
+`--speculative-config` line (**`MTP=0 ./scripts/start.sh`**) restores the
+original no-spec config — see CALIBRATION.md §3 for why the dynamic key and
+PIECEWISE override matter.
+
+**Deliberately NOT used** (each item is a failed or harmful alternative — note MTP itself is **used** in the shipped config, but only in the PIECEWISE form; see CALIBRATION §3):
 
 | Flag | Why not |
 |---|---|
-| MTP spec-decode (`--speculative-config {mtp, num_speculative_tokens:3}`) | **Works on 0.27.1 only with the caveats documented in CALIBRATION §3.** Naïve use (static K3 + default FULL CUDA graphs) garbles output — we saw 125.8 tok/s with empty `content` and an eventual `CUDA error: illegal memory access`. That was the FULL-cudagraph spec-verify bug, not MTP itself. Use it as `MTP=1` in `scripts/start.sh` (dynamic spec → PIECEWISE graphs + expandable-segments allocator): correct across the full 262K window, ~1.8× decode, tools 12/12. Otherwise the plain config stays at ~55 tok/s. |
 | `--kv-cache-dtype nvfp4` | No vLLM attention backend supports NVFP4 KV on this GPU — fails at boot with "No valid attention backend found" listing every backend rejecting it. |
-| `--kv-cache-dtype turboquant_4bit_nc` + MTP | Only garbles under **FULL** CUDA graphs; correct under PIECEWISE (see row above / CALIBRATION §3). |
+| `--kv-cache-dtype turboquant_4bit_nc` + MTP (FULL graphs) | Garbles output — this is the naive-MTP path fixed by PIECEWISE (see CALIBRATION §3). |
 | `--enforce-eager` | Not needed *once KV is pinned* — costs CUDA graphs + torch.compile (re-measured 2026-08-14: ≈28% slower decode). Only keep it if you are OOM-ing with auto-fit. |
 | `--kv-cache-dtype fp8` at 262144 | Fails boot: needs 8.18 GiB at 262144; available KV memory varies by boot state (measured 5.0–6.66 GiB → vLLM's "estimated max length" landed at 158,368 / 213,248 / 203,840 / 227,360 on different runs). fp8 is only usable at ≤ ~200K on this card. |
 | `--gpu-memory-utilization 0.985+` | Exceeds free GPU memory at boot ("Free memory less than desired utilization"). `0.98` is the practical ceiling on a 32 GB card. |
@@ -121,21 +132,27 @@ get_weather, search_files), scored on tool name + argument values.
 
 | Metric | Result |
 |---|---:|
-| Passing calls | 10 / 12 |
-| Verified args (correct tool + values) | 10 / 12 |
+| Passing calls | 12 / 12 |
+| Verified args (correct tool + values) | 12 / 12 |
 
-The 2 misses (`book_flight`) produced no tool call at all — identical behavior on
-fp8/KV-pinned configs, i.e. a model quirk, not this recipe.
+(With `MTP=0` the same harness scored 10 / 12 — the 2 `book_flight` misses.)
+Earlier revisions of this doc reported the 10/12 number for the default; the
+shipped default now runs with MTP, and MTP's higher sampling diversity clears
+those calls.
 
 ### Decode throughput
 
 | Workload | Tokens/s |
 |---|---:|
-| Single request | ~55 |
-| 4 concurrent requests (aggregate) | ~197 |
-| Per-request under 4-way load | ~49 |
+| Single request | ~97 |
+| 4 concurrent requests (aggregate) | ~311 |
+| Per-request under 4-way load | ~78 |
 
-`--enforce-eager` downgrades these to ~40 / ~151 (re-measured, see CALIBRATION) — keep CUDA graphs on.
+Measured with the shipped default (`MTP=1`). With `MTP=0` the same harness
+scores ~55 single / ~197 aggregate / ~49 per-request — the original no-spec
+configuration is ~1.8× slower single-stream. All numbers from
+`benchmark/speed_test.py` (usage-reported completion tokens, not assumed
+`max_tokens`).
 
 ### Benchmark provenance
 
@@ -143,8 +160,11 @@ fp8/KV-pinned configs, i.e. a model quirk, not this recipe.
   `benchmark/control_test.py`, `benchmark/speed_test.py` — stdlib-only, hit
   `POST /v1/chat/completions` on the served endpoint, no external deps.
 - All numbers measured on the reference hardware/software in
-  [Environment used for validation](#environment-used-for-validation) against
-  the *final* recipe flags (KV pinned, no MTP, CUDA graphs on).
+  [Environment used for validation](#environment-used-for-validation) using
+  the shipped default configuration (`MTP=1`: dynamic K3 spec-decode, PIECEWISE
+  CUDA graphs, expandable-segments allocator). Needle/code-edit rows above are
+  identical across `MTP=1` and `MTP=0` (both fully pass 8K–196K); tools and
+  decode differ and are reported per-config.
 - Scoring caveats (why substring matching on `content` only, and not exact
   matching on `reasoning`): see [CALIBRATION.md](CALIBRATION.md).
 
