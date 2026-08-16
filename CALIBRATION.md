@@ -145,12 +145,41 @@ single-stream decode drops from 54.8 → 39.5 tok/s and 4-way aggregate from
 - Note the `bench_framework` config guard: for "fp8"-tag runs it only tests
   lengths ≤ 131072 (because fp8 can't reach 262144).
 
+## max-num-batched-tokens sweep under MTP (measured 2026-08-15, §8)
+
+Live sweep on the reference 5090, MTP K3 + dynamic spec (PIECEWISE), same
+pin/util/seqs, only `--max-num-batched-tokens` (per-arm `mnbt`) or K varied.
+Official harness (`speed_test.py`), single-run per arm except the headline arm.
+
+| arm | mnbt | K | single tok/s | 4-way agg tok/s | mean accept | tokens emitted |
+|---|---|---:|---:|---:|---:|---:|
+| default | 512 | 3 | **96.9** | **311.6** | 2.39 | 400 (thinking-only head) |
+| 1024 | 1024 | 3 | **148.5** (3/3 runs, deterministic) | 203.6 | 3.77 | 340 (content visible) |
+| 2048 | 2048 | 3 | 88.1 | 194.6 | 2.16 | 400 |
+| 4096 | 4096 | 3 | 96.3 | 197.9 | 2.45 | 400 |
+| K4 | 2048 | 4 | 145.0 | 145.6 | 3.02 | 106 (early stop) |
+| K5 | 2048 | 5 | 138.7 | 181.2 | 3.79 | 251 |
+
+Interpretation:
+- **mnbt=1024 is the sweet spot for single-stream**: +53% (148.5 vs 96.9),
+  deterministic across 3 runs, acceptance 3.77. Exposed as `MNBT=1024` in
+  `scripts/start.sh` (default 512).
+- **It costs 4-way concurrency**: 203.6 agg vs 311.6 (−35%). The trade is
+  real and workload-dependent: single-stream latency vs. batched throughput.
+- Configs that speed up single-stream also *changed generation shape* (fewer
+  tokens emitted, content visible in the counting bench, higher K → early
+  stops). Only mnbt=1024/k3 produced the full 340-token stable profile; other
+  fast arms (K4/K5) were shorter outputs, so treat their single-stream wins as
+  optimistic vs. sustained decode.
+
 ## Why these exact numbers
 
 - `5368709120` = 5 GiB. Empirically 306,325 KV tokens (1.17× of 262,144) with
   ~2–3 GiB of GPU headroom left for prefill activations. The estimator's own
   "maximum concurrency for 262,144 tokens per request: 1.17x" confirms this is
   sized correctly.
-- `max-num-batched-tokens 512` keeps prefill chunks small → bounded activation
-  peak for long-context requests (no re-alloc surprise).
+- `max-num-batched-tokens 512` was chosen to bound prefill activation peaks for
+  long contexts (no-MTP era). Under MTP the sweep in §8 shows 1024 is better
+  for single-stream (+53%, deterministic) at the cost of 4-way aggregate;
+  2048/4096 regress both. Knob: `MNBT`.
 - `max-num-seqs 4` provides mild concurrency without reducing KV below 1 request.
