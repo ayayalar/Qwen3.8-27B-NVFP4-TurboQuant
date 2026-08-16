@@ -176,7 +176,7 @@ fp8/KV-pinned configs, i.e. a model quirk, not this recipe.
 
 ```
 scripts/setup.sh           — one-time bootstrap: create vLLM env + download model (~22 GiB), idempotent
-scripts/start.sh           — start the server in the background (pidfile + log)
+scripts/start.sh           — start the server in the background (pidfile + log); MTP=1 opt-in spec-decode
 scripts/stop.sh            — graceful stop (SIGTERM, then SIGKILL after timeout)
 benchmark/bench_framework.py — tool-call + needle + code-edit benchmark (stdlib-only)
 benchmark/control_test.py  — minimal A/B control (stdlib-only)
@@ -191,7 +191,19 @@ Lifecycle:
 # defaults resolve under $HOME (portable across machines); override with env vars
 MODEL_DIR=/absolute/path/... ./scripts/start.sh      # background, pidfile written
 ./scripts/stop.sh                                     # drains, then SIGTERM/SIGKILL
+
+# OPTIONAL: enable MTP speculative decoding (~3x single-stream decode speed,
+# full 262K context preserved — verified correct on 0.27.1)
+MTP=1 ./scripts/start.sh
 ```
+
+`MTP=1` changes two things under the hood (both verified necessary): it adds
+`--speculative-config '{"method":"mtp","num_speculative_tokens":3,"num_speculative_tokens_per_batch_size":[[1,4,3]]}'`
+and raises the KV pin from 5 GiB to 5.4 GiB. The dynamic
+`num_speculative_tokens_per_batch_size` key is what makes vLLM step CUDA-graph
+mode from `FULL_AND_PIECEWISE` to `PIECEWISE`; the FULL capture path corrupts
+turboquant-KV output under speculation on 0.27.1 (see CALIBRATION.md). Plain
+`./scripts/start.sh` keeps the original validated non-spec configuration.
 
 All benchmark scripts are `urllib`-only (no deps) and target an OpenAI-compatible
 `/v1` endpoint. Scoring is substring-based and scores the **content** field only —

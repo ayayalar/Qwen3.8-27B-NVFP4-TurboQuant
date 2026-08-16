@@ -39,16 +39,41 @@ Served fine at boot (it boots *cleanly* — that's the trap), but output was gar
 - needle recall → empty, reasoning loop `think think think ...`
 
 Reproduced at 262144 with turboquant (both fp8 KV and 4-bit KV), with and without
-the KV pin. **Re-verified live on 2026-08-14 (this edit):** an MTP boot with 4-bit
-KV hit **125.8 tok/s single-stream** (vs 55 without MTP) and returned **empty
-`content`**, then a 4-way concurrent burst crashed the engine with `CUDA error:
-illegal memory access` (HTTP 500s) — MTP trades ~2.3× decode speed for broken
-output under load. Conclusion: **MTP + this model's KV path is the garbler, not
-the KV quant itself.** Same weights + same KV dtype *without* MTP generate cleanly.
+the KV pin. **Root cause found 2026-08-15 (this edit):** the garble is a CUDA-graph
+capture artifact, not the KV dtype. With `FULL_AND_PIECEWISE` cudagraph mode (the
+0.27.1 default at opt level ≥ 2), the spec-verify path inside
+`TurboQuantAttentionImpl.forward()` does a GPU→CPU sync via
+`query_start_loc.tolist()` and produces attention over the wrong chunk — draft
+tokens get rejected every time (`Accepted: 0`, `Per-position acceptance rate:
+0.000`) and long-context output collapses. **Stepping CUDA graphs to PIECEWISE
+(no FULL capture) makes MTP+turboquant fully correct** — math, tool calls, and
+needle recall pass, with MTP accepting drafts (~50–62%):
+- single-stream decode: **166.9 tok/s** (vs 54.8 non-spec) at full 262,144
+- 4-way concurrent: **206.3 tok/s aggregate** (vs 196.9 non-spec)
+- needles 64K / 131K / 196K: all PASS, marker in `content`
+
+Two equivalent ways to get PIECEWISE on 0.27.1 (no source patch needed):
+1. `--enforce-eager` (PIECEWISE→NONE, costs ~40% decode — works, ~99 tok/s), or
+2. **dynamic** speculative decoding — add
+   `"num_speculative_tokens_per_batch_size": [[1,4,3]]` to the spec config.
+   vLLM's own `_maybe_override_dynamic_sd_cudagraph_mode` then automatically
+   downgrades FULL→PIECEWISE with a warning ("for reliability"). This is the
+   supported route and what `MTP=1` in `scripts/start.sh` uses.
+
+The open upstream PR #40914 ([K+1 spec-verify routing]) targets the same class
+of bug but its dispatch predicate never fires on 0.27.1 (verified: 0/3508
+calls eligible) — the PIECEWISE/dynamic-SD route is what actually fixes it on
+this version. Conclusion: **MTP + turboquant KV is not the garbler; FULL
+CUDA-graph capture is.** Same weights + same KV dtype *without* FULL graphs
+generate cleanly.
 
 ### 4. kv-cache-memory-bytes (pin) ALONE with MTP still garbled
 Pinning KV (5 GiB) + MTP: boots, 270,510-token pool (still > 256K), but every
-control output empty / no tool call / no recall. Confirms #3 is unconditional on pin.
+control output empty / no tool call / no recall. At the time this looked like
+"#3 is unconditional on pin" — with the root cause now known (FULL CUDA-graph
+capture), this test actually reflects the same defect: it was run with
+FULL_AND_PIECEWISE graphs. Under PIECEWISE the identical pin+MTP config is
+fully correct (see #3).
 
 ### 5. `--num-gpu-blocks-override` gymnastics
 Tried to force KV allocation (2800/2700/1370/1200 blocks). Runs into the same
