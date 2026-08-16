@@ -154,6 +154,25 @@ configuration is ~1.8× slower single-stream. All numbers from
 `benchmark/speed_test.py` (usage-reported completion tokens, not assumed
 `max_tokens`).
 
+### Time-to-first-token (streaming, single request)
+
+MTP trades a small amount of prefill latency for much higher decode throughput.
+Measured as time to the first emitted delta (reasoning or content) on a cold
+single prompt; network-local.
+
+| Prompt tokens | MTP=1 (default) | MTP=0 |
+|---:|---:|---:|
+| 1K | 0.21s | 0.19s |
+| 8K | 1.31s | 1.18s |
+| 32K | 6.84s | 6.22s |
+| 64K | 19.09s | 17.52s |
+
+TTFT scales roughly linearly with prompt size and is ~2–9% higher with MTP
+enabled. For latency-critical interactive use (chat where the user waits for
+the *first* token), MTP=0 is marginally better; for throughput-bound workloads
+(batch, agent loops, long generations) MTP=1 wins by ~1.8× on decode. Choose
+per workload — the trade-off is real on both sides.
+
 ### Benchmark provenance
 
 - Scripts: `benchmark/bench_framework.py` (recall + code-edit + tools),

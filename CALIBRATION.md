@@ -83,6 +83,12 @@ this version. Conclusion: **MTP + turboquant KV is not the garbler; FULL
 CUDA-graph capture is.** Same weights + same KV dtype *without* FULL graphs
 generate cleanly.
 
+Latency cost of the fix (measured 2026-08-15, streaming first-delta):
+MTP=1 vs MTP=0 is ~2–9% higher TTFT (0.21 vs 0.19s at 1K; 19.09 vs 17.52s at
+64K). The throughput win (~1.8× decode) buys more than that back for
+generation-heavy workloads, but interactive users waiting on the first token
+should weigh MTP=0. See README "Time-to-first-token".
+
 ### 4. kv-cache-memory-bytes (pin) ALONE with MTP still garbled
 Pinning KV (5 GiB) + MTP: boots, 270,510-token pool (still > 256K), but every
 control output empty / no tool call / no recall. At the time this looked like
