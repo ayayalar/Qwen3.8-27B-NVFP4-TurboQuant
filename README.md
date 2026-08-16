@@ -144,18 +144,18 @@ those calls.
 
 | Workload | Tokens/s |
 |---|---:|
-| Single request (default) | ~97 |
-| Single request (`MNBT=1024`) | ~148 |
-| 4 concurrent requests (aggregate, default) | ~311 |
-| 4 concurrent requests (aggregate, `MNBT=1024`) | ~204 |
-| Per-request under 4-way load (default) | ~78 |
+| Single request (default) | ~148 |
+| Single request (`MNBT=512`) | ~97 |
+| 4 concurrent requests (aggregate, default) | ~331 |
+| 4 concurrent requests (aggregate, `MNBT=512`) | ~310 |
+| Per-request under 4-way load (default) | ~83 |
 
-Measured with the shipped default (`MTP=1`). With `MTP=0` the same harness
-scores ~55 single / ~197 aggregate / ~49 per-request. `MNBT=1024` raises
-single-stream to ~148 (−*sustained*; deterministic 3/3) but lowers 4-way
-aggregate to ~204 — the sweep is documented in CALIBRATION §8. All numbers
-from `benchmark/speed_test.py` (usage-reported completion tokens, not assumed
-`max_tokens`).
+Measured with the shipped default (`MTP=1`, `MNBT=1024`). With `MTP=0` the
+same harness scores ~55 single / ~197 aggregate / ~49 per-request. Earlier
+revisions reported 512-balanced aggregate numbers as the default; a clean-boot
+A/B (2026-08-16) shows `MNBT=1024` is strictly better on both single (+53%)
+and 4-way aggregate (+6%). Sweep and correction documented in CALIBRATION §8.
+All numbers from `benchmark/speed_test.py` (usage-reported completion tokens).
 
 ### Time-to-first-token (streaming, single request)
 

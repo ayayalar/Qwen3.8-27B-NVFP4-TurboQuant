@@ -161,11 +161,11 @@ Official harness (`speed_test.py`), single-run per arm except the headline arm.
 | K5 | 2048 | 5 | 138.7 | 181.2 | 3.79 | 251 |
 
 Interpretation:
-- **mnbt=1024 is the sweet spot for single-stream**: +53% (148.5 vs 96.9),
-  deterministic across 3 runs, acceptance 3.77. Exposed as `MNBT=1024` in
-  `scripts/start.sh` (default 512).
-- **It costs 4-way concurrency**: 203.6 agg vs 311.6 (−35%). The trade is
-  real and workload-dependent: single-stream latency vs. batched throughput.
+- **mnbt=1024 is the verified default**: +53% single-stream (148.5 vs 96.9),
+  deterministic across runs, acceptance 3.77, AND +6% 4-way aggregate (330.5 vs
+  310.4) on a clean boot. The earlier "−35% aggregate" (203.6) was a warm-boot /
+  leftover-GPU-state artifact from the stacked sweep — a clean-boot A/B
+  (2026-08-16) refutes it. `MNBT` env exposes both; default is 1024.
 - Configs that speed up single-stream also *changed generation shape* (fewer
   tokens emitted, content visible in the counting bench, higher K → early
   stops). Only mnbt=1024/k3 produced the full 340-token stable profile; other
@@ -178,8 +178,7 @@ Interpretation:
   ~2–3 GiB of GPU headroom left for prefill activations. The estimator's own
   "maximum concurrency for 262,144 tokens per request: 1.17x" confirms this is
   sized correctly.
-- `max-num-batched-tokens 512` was chosen to bound prefill activation peaks for
-  long contexts (no-MTP era). Under MTP the sweep in §8 shows 1024 is better
-  for single-stream (+53%, deterministic) at the cost of 4-way aggregate;
-  2048/4096 regress both. Knob: `MNBT`.
+- `max-num-batched-tokens 1024` (default) is the verified optimum under MTP with
+  K3: best single-stream (+53% vs 512) and no aggregate penalty on a clean
+  boot (+6%). 2048/4096 regress both. Knob: `MNBT` (512 available).
 - `max-num-seqs 4` provides mild concurrency without reducing KV below 1 request.

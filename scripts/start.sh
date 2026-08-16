@@ -21,11 +21,10 @@ VLLM_BIN="${VLLM_BIN:-$HOME/unsloth-nvfp4-env/bin/vllm}"
 LOGFILE="${LOGFILE:-/tmp/qwen38_vllm.log}"
 PIDFILE="${PIDFILE:-/tmp/qwen38_vllm.pid}"
 MTP="${MTP:-1}"
-# Tune max-num-batched-tokens. 512 (default) balances single-stream vs 4-way;
-# 1024 gives +53% single-stream (148 vs 97) but -35% 4-way aggregate (204 vs 312),
-# measured with MTP K3 (see CALIBRATION §7). Knob exists because the two workloads
-# genuinely prefer opposite settings.
-MNBT="${MNBT:-512}"
+# max-num-batched-tokens. 1024 (default) is the verified optimum with MTP K3:
+# +53% single-stream vs 512 and no aggregate penalty (clean-boot A/B; see
+# CALIBRATION §8). Set MNBT=512 for the conservative profile.
+MNBT="${MNBT:-1024}"
 
 # Positional shorthand: ./start.sh /abs/model/dir [port]
 [ $# -ge 1 ] && MODEL_DIR="$1"
