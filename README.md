@@ -4,8 +4,8 @@ Validated serving configuration for running `unsloth/Qwen3.8-27B-NVFP4` at its f
 **262,144 (256K) token** context on one NVIDIA RTX 5090 (32 GB VRAM), including
 working tool-calling and long-context reliability.
 
-> Status: **reproduced and verified** on 2026-08-14 against `vLLM 0.27.1`,
-> `unsloth-nvfp4-env`, CUDA 13.3 / driver 610.43, RTX 5090.
+> Status: **reproduced and verified** (2026-08-14 through 2026-08-16) against
+> `vLLM 0.27.1`, `unsloth-nvfp4-env`, CUDA 13.3 / driver 610.43, RTX 5090.
 > Every flag choice in the config below was made against a failed alternative.
 > See [CALIBRATION.md](CALIBRATION.md) for the full rejection log — several
 > "obvious" configs look correct and silently degrade the model.
@@ -61,8 +61,8 @@ The recipe that works combines three non-obvious choices:
 3. **MTP speculative decoding must run under PIECEWISE CUDA graphs.** This is
    the counterintuitive one — see below. Naive MTP (static K, FULL graphs)
    garbles output; the corrected path (`MTP=1` in start.sh: dynamic spec →
-   PIECEWISE graphs + expandable-segments) is verified correct and ~1.8×
-   faster than no-MTP.
+   PIECEWISE graphs + expandable-segments) is verified correct and ~2.7×
+   faster than no-MTP at the shipped default (MNBT=1024).
 
 ## The recipe
 
@@ -77,7 +77,7 @@ vllm serve /path/to/unsloth/Qwen3.8-27B-NVFP4 \
   --kv-cache-dtype turboquant_4bit_nc \
   --kv-cache-memory-bytes 5800000000 \                    # 5.4 GiB pinned (MTP)
   --max-num-seqs 4 \
-  --max-num-batched-tokens 512 \
+  --max-num-batched-tokens 1024 \
   --gpu-memory-utilization 0.98 \
   --attention-config.flash_attn_version=2 \
   --speculative-config '{"method":"mtp","num_speculative_tokens":3,"num_speculative_tokens_per_batch_size":[[1,4,3]]}' \
@@ -100,7 +100,7 @@ PIECEWISE override matter.
 | `--kv-cache-dtype fp8` at 262144 | Fails boot: needs 8.18 GiB at 262144; available KV memory varies by boot state (measured 5.0–6.66 GiB → vLLM's "estimated max length" landed at 158,368 / 213,248 / 203,840 / 227,360 on different runs). fp8 is only usable at ≤ ~200K on this card. |
 | `--gpu-memory-utilization 0.985+` | Exceeds free GPU memory at boot ("Free memory less than desired utilization"). `0.98` is the practical ceiling on a 32 GB card. |
 
-## Benchmark results (validated 2026-08-14, this configuration)
+## Benchmark results (validated, this configuration)
 
 ### Long-context recall — needle-in-haystack
 
@@ -173,8 +173,8 @@ single prompt; network-local.
 TTFT scales roughly linearly with prompt size and is ~2–9% higher with MTP
 enabled. For latency-critical interactive use (chat where the user waits for
 the *first* token), MTP=0 is marginally better; for throughput-bound workloads
-(batch, agent loops, long generations) MTP=1 wins by ~1.8× on decode. Choose
-per workload — the trade-off is real on both sides.
+(batch, agent loops, long generations) MTP=1 wins by ~2.7× on decode at the
+shipped default. Choose per workload — the trade-off is real on both sides.
 
 ### Benchmark provenance
 
@@ -218,7 +218,7 @@ per workload — the trade-off is real on both sides.
 
 ```
 scripts/setup.sh           — one-time bootstrap: create vLLM env + download model (~22 GiB), idempotent
-scripts/start.sh           — start the server in the background (pidfile + log); MTP=1 opt-in spec-decode
+scripts/start.sh           — start the server in the background (pidfile + log); spec-decode on, MNBT env
 scripts/stop.sh            — graceful stop (SIGTERM, then SIGKILL after timeout)
 benchmark/bench_framework.py — tool-call + needle + code-edit benchmark (stdlib-only)
 benchmark/control_test.py  — minimal A/B control (stdlib-only)
@@ -234,8 +234,9 @@ Lifecycle:
 MODEL_DIR=/absolute/path/... ./scripts/start.sh      # background, pidfile written
 ./scripts/stop.sh                                     # drains, then SIGTERM/SIGKILL
 
-# MTP speculative decoding is ON by default (~1.8x single-stream decode speed,
-# verified correct at full 262K on 0.27.1). Disable with:
+# MTP speculative decoding is ON by default (~2.7x single-stream decode speed
+# vs MTP=0 at the shipped default; verified correct at full 262K on 0.27.1).
+# Disable with:
 MTP=0 ./scripts/start.sh
 ```
 
@@ -259,7 +260,8 @@ The framework's `TAG` argument selects the length set — use a tag containing
 `t4` for the full suite (matches README), or `fp8`/anything else for the
 reduced ≤131K set. Endpoint/port/output are env-overridable (`BENCH_URL`,
 `BENCH_MODEL`, `BENCH_OUT`). Numbers in this README were re-verified
-2026-08-14 against the reference box (tool 10/12, all needles PASS, code-edit PASS).
+2026-08-15/16 on the reference box against the shipped default (tools 12/12,
+all needles PASS, code-edit PASS; decode per table above).
 
 ## License
 
