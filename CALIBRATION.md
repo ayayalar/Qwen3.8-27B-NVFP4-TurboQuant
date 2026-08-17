@@ -115,6 +115,54 @@ Re-measured 2026-08-14 (this edit): with the pin in place and `--enforce-eager`,
 single-stream decode drops from 54.8 → 39.5 tok/s and 4-way aggregate from
 196.9 → 150.8 tok/s (~28% slower). CUDA graphs are worth keeping.
 
+### 7. KV de-over-provisioning: making a genuine 262K request survive (verified 2026-08-17)
+
+**The claim that never existed.** All prior "full 262K verified" wording meant
+`--max-model-len 262144` (a config setting) with decode measured on ~40-token
+prompts. No genuine 262K-length prefill was ever run: the longest actual prompt
+tests were the 196K needles. This mattered because a real 262K prefill did not
+work on the shipped config.
+
+**Failure mode.** Single-stream requests with ~245K / ~258K prompt tokens
+(prefill, thinking off, real usage tokens) crashed the engine repeatedly:
+
+```
+torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 472.00 MiB.
+GPU 0 has a total capacity of 31.40 GiB of which 450.62 MiB is free.
+... 153.73 MiB reserved but unallocated ...
+```
+
+This occurred **with** `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` in
+force — the same mitigation that fixed the 196K case (§3) is insufficient at
+245-258K. The engine died (`EngineDeadError`); 200K and 214K prefills
+survived, 245K crashed. The allocation shortfall was only ~21 MiB: this is a
+tight activation-headroom problem, not a KV-capacity one (the pool held
+~306K tokens).
+
+**Root cause.** `--kv-cache-memory-bytes 5800000000` reserves 5.4 GiB of KV but
+a single request at the cap needs only ~5.02 GiB of KV (vLLM's own estimator:
+a 5.25e9 pin caps max model length at 255,840). The 0.38 GiB of over-provision
+buys 4-way concurrency headroom but starves prefill activations.
+
+**Verified fix.** De-over-provision the pin: `KV_BYTES=5500000000` (5.12 GiB)
+frees ~0.3 GiB for prefill activations while the KV pool (~268K tokens) still
+covers one max-length sequence. Genuine single-stream requests then complete
+end-to-end with the engine healthy afterwards:
+
+- **262,122-token prefill** (99.99% of cap, calibrated via `/tokenize`,
+  `usage.prompt_tokens` confirmed) — completes in ~122s, engine HTTP 200 after.
+- Needle recall at **260,640** tokens — marker in `content`. ✅
+- Code-edit at **260,665** tokens — emitted `return x * 5`. ✅
+- Decode at the cap: ~11-12 tok/s (prose, thinking off); full decode-vs-context
+  curve in README §"Decode vs context".
+
+**Trade-off and default.** The 5.5e9 pin reduces the pool ~306K → ~268K tokens,
+so four concurrent long-context sequences will run short on KV. The shipped
+default (5.4 GiB) stays the default for 4-way workloads; `KV_BYTES=5500000000`
+is the documented single-stream/262K profile (now an env hook in `start.sh`).
+Do not publish "~150 tok/s at 262K": that number is short-context-only, and a
+262K decode at full depth is ~12 tok/s for prose.
+
 ## What the final config changed vs each failure
 
 | Failure | Final config element that resolves it |

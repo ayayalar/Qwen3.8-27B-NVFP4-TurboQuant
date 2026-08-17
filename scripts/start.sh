@@ -32,8 +32,15 @@ MNBT="${MNBT:-1024}"
 
 # MTP needs a larger KV pin than the non-spec config (verified empirically:
 # K3 draft head needs ~5.02 GiB of KV at 262144, over the 5 GiB default).
-KV_BYTES=5368709120
-[ "$MTP" = "1" ] && KV_BYTES=5800000000
+# KV_BYTES is now environment-overridable. VERIFIED 2026-08-17: pinning
+# KV_BYTES=5500000000 enables a genuine 262K single-stream prefill (a
+# 262,122-token request completed; recall + code-edit pass at ~260.6K) by
+# de-over-provisioning the pool to free prefill activation headroom. The
+# shipped default (5.4 GiB pin) keeps the ~306K-token pool for 4-way
+# concurrency but caps a single prefill at ~215-230K. See CALIBRATION §7.
+if [ -z "${KV_BYTES:-}" ]; then
+  if [ "$MTP" = "1" ]; then KV_BYTES=5800000000; else KV_BYTES=5368709120; fi
+fi
 
 # The model must already be on disk — this recipe does not auto-fetch.
 # Run scripts/setup.sh to download it.

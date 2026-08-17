@@ -4,11 +4,19 @@ Validated serving configuration for running `unsloth/Qwen3.8-27B-NVFP4` at its f
 **262,144 (256K) token** context on one NVIDIA RTX 5090 (32 GB VRAM), including
 working tool-calling and long-context reliability.
 
-> Status: **reproduced and verified** (2026-08-14 through 2026-08-16) against
+> Status: **reproduced and verified** (2026-08-14 through 2026-08-17) against
 > `vLLM 0.27.1`, `unsloth-nvfp4-env`, CUDA 13.3 / driver 610.43, RTX 5090.
 > Every flag choice in the config below was made against a failed alternative.
 > See [CALIBRATION.md](CALIBRATION.md) for the full rejection log — several
 > "obvious" configs look correct and silently degrade the model.
+>
+> **2026-08-17 correction:** a *genuine* 262K-length request only works with the
+> single-stream KV profile (`KV_BYTES=5500000000`), verified end-to-end
+> (262,122-token prefill completes; recall + code-edit PASS at ~260.6K). The
+> shipped default pin (5.4 GiB, 4-way headroom) OOMs a single prefill past
+> ~230K — earlier "full 262K verified" wording meant `max_model_len` config +
+> short-prompt decode, never a real 262K request. See the
+> [Decode vs context](#decode-vs-context--and-the-262k-boundary) section.
 
 ## QuickStart
 
@@ -90,6 +98,21 @@ window under MTP (set automatically by `scripts/start.sh`). Dropping the
 original no-spec config — see CALIBRATION.md §3 for why the dynamic key and
 PIECEWISE override matter.
 
+**Two KV profiles (see CALIBRATION §7).** The KV pin is now
+environment-overridable and defines what the box can actually serve:
+
+| Profile | Command | Single-prefill ceiling | 4-way long-context headroom |
+|---|---|---|---|
+| shipped default (4-way) | `./scripts/start.sh` | ~215-230K (OOM past it) | ✅ ~306K-token pool |
+| single-stream 262K | `KV_BYTES=5500000000 ./scripts/start.sh` | ✅ **genuine 262,144** | ⚠️ reduced (~268K pool) |
+
+The 262K profile was verified with a literal 262,122-token request (99.99% of
+the cap) plus needle recall and a code-edit at ~260.6K — all completing with
+the engine healthy afterward. It exists because a genuine 262K prefill needs
+~5.02 GiB of KV and ~0.5 GiB of prefill activation headroom; the default
+5.4 GiB pin consumes the latter. Defaults are unchanged for anyone who does
+not opt in.
+
 **Deliberately NOT used** (each item is a failed or harmful alternative — note MTP itself is **used** in the shipped config, but only in the PIECEWISE form; see CALIBRATION §3):
 
 | Flag | Why not |
@@ -114,6 +137,8 @@ Deterministic probe: a unique `NEEDLE-XXXX <status>` marker sentence embedded at
 | 64K | ✅ PASS |
 | 131K | ✅ PASS |
 | 196K | ✅ PASS |
+| 200K | ✅ PASS (2026-08-17, KV_BYTES=5.5e9) |
+| 260K | ✅ PASS (2026-08-17, 260,640-token prompt, KV_BYTES=5.5e9) |
 
 ### Agentic code-edit
 
@@ -124,6 +149,7 @@ rewrite it to multiply by 4. Scored on the emitted function line.
 |---:|---|---|
 | 64K | ✅ PASS | `def double_value(x): return x * 4` |
 | 131K | ✅ PASS | `def double_value(x): return x * 4` |
+| 260K | ✅ PASS (2026-08-17, 260,665-token prompt, `return x * 5` edit, KV_BYTES=5.5e9) | `return x * 5` |
 
 ### Tool calling
 
@@ -156,6 +182,39 @@ revisions reported 512-balanced aggregate numbers as the default; a clean-boot
 A/B (2026-08-16) shows `MNBT=1024` is strictly better on both single (+53%)
 and 4-way aggregate (+6%). Sweep and correction documented in CALIBRATION §8.
 All numbers from `benchmark/speed_test.py` (usage-reported completion tokens).
+
+### Decode vs context — and the 262K boundary
+
+The headline numbers above are **short-context measurements** (~40-token
+prompt). Decode collapses monotonically with context length, and is strongly
+output-type dependent because MTP draft acceptance depends on how predictable
+the output is. Measured 2026-08-17 with the official harness methodology
+(usage-reported completion tokens, streaming, thinking off unless noted):
+
+| Context (prompt tokens) | Prose tok/s | Code tok/s |
+|---:|---:|---:|
+| ~40 | ~75 | **~149** (also 157.9 on a later boot — run-to-run variance) |
+| 64K | 33.4 | — |
+| 128K | 20.7 | — |
+| 159K | 17.5 | — |
+| 200K | 13.5 | 24.9 |
+| 214K | — | 22.4 |
+| 240K | 12.7 | — |
+| 262,122 (cap, KV_BYTES=5.5e9) | 11-12 | — (prefill 122s) |
+
+- Output-type effect (~2×): code/predictable text drafts well under MTP
+  (acceptance ~3.77); free-form prose/reasoning drafts poorly. This is why
+  the DecodeBench 150 and a realistic agentic load differ by ~3× — both are
+  real, they measure different work.
+- The 150-family numbers are only achievable at short context with
+  code-like output. A genuine 262K prefill requires the single-stream KV
+  profile (`KV_BYTES=5500000000`, CALIBRATION §7) — the shipped default pin
+  OOMs a single prefill past ~230K (verified crash at ~245K/258K, engine
+  dies). With the profile enabled, the cap request completes and output is
+  correct at depth (see recall/code-edit tables above).
+- 4-way aggregate with code output measured 525 tok/s (per-stream ~143) on
+  the 262K profile; this is NOT comparable to the ~331 counting-probe number —
+  aggregate rates are output-type dependent too.
 
 ### Time-to-first-token (streaming, single request)
 
@@ -218,7 +277,7 @@ shipped default. Choose per workload — the trade-off is real on both sides.
 
 ```
 scripts/setup.sh           — one-time bootstrap: create vLLM env + download model (~22 GiB), idempotent
-scripts/start.sh           — start the server in the background (pidfile + log); spec-decode on, MNBT env
+scripts/start.sh           — start the server in the background (pidfile + log); spec-decode on, MNBT/KV_BYTES env
 scripts/stop.sh            — graceful stop (SIGTERM, then SIGKILL after timeout)
 benchmark/bench_framework.py — tool-call + needle + code-edit benchmark (stdlib-only)
 benchmark/control_test.py  — minimal A/B control (stdlib-only)
@@ -235,12 +294,16 @@ MODEL_DIR=/absolute/path/... ./scripts/start.sh      # background, pidfile writt
 ./scripts/stop.sh                                     # drains, then SIGTERM/SIGKILL
 
 # MTP speculative decoding is ON by default (~2.7x single-stream decode speed
-# vs MTP=0 at the shipped default; verified correct at full 262K on 0.27.1).
+# vs MTP=0 at the shipped default; verified correct on 0.27.1).
 # Disable with:
 MTP=0 ./scripts/start.sh
+
+# Genuine 262K single-stream window (verified 2026-08-17, CALIBRATION §7):
+# de-over-provisions the KV pin to free prefill activation headroom.
+KV_BYTES=5500000000 ./scripts/start.sh
 ```
 
-`scripts/start.sh` runs with speculative decoding (dynamic `num_speculative_tokens_per_batch_size` → vLLM steps cudagraph from `FULL_AND_PIECEWISE` to `PIECEWISE`; the FULL capture path corrupts turboquant-KV output under speculation on 0.27.1 — see CALIBRATION.md §3) and sets `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` (required for the full-262K window under MTP). `MTP=0` restores the original non-spec configuration verbatim: 5 GiB KV pin, no speculation, no allocator override.
+`scripts/start.sh` runs with speculative decoding (dynamic `num_speculative_tokens_per_batch_size` → vLLM steps cudagraph from `FULL_AND_PIECEWISE` to `PIECEWISE`; the FULL capture path corrupts turboquant-KV output under speculation on 0.27.1 — see CALIBRATION.md §3) and sets `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` (required for the long-window under MTP). `MTP=0` restores the original non-spec configuration verbatim: 5 GiB KV pin, no speculation, no allocator override. `KV_BYTES` (default 5.4 GiB under MTP) selects the KV profile — see the [Two KV profiles](#two-kv-profiles-see-calibration-7) table.
 
 All benchmark scripts are `urllib`-only (no deps) and target an OpenAI-compatible
 `/v1` endpoint. Scoring is substring-based and scores the **content** field only —
@@ -261,7 +324,9 @@ The framework's `TAG` argument selects the length set — use a tag containing
 reduced ≤131K set. Endpoint/port/output are env-overridable (`BENCH_URL`,
 `BENCH_MODEL`, `BENCH_OUT`). Numbers in this README were re-verified
 2026-08-15/16 on the reference box against the shipped default (tools 12/12,
-all needles PASS, code-edit PASS; decode per table above).
+all needles PASS, code-edit PASS; decode per table above); the 262K-profile
+rows and the decode-vs-context table were added from verified measurements on
+2026-08-17 (see CALIBRATION §7).
 
 ## License
 
