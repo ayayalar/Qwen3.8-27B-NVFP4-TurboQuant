@@ -230,3 +230,48 @@ Interpretation:
   K3: best single-stream (+53% vs 512) and no aggregate penalty on a clean
   boot (+6%). 2048/4096 regress both. Knob: `MNBT` (512 available).
 - `max-num-seqs 4` provides mild concurrency without reducing KV below 1 request.
+
+
+## 7. FlashInfer b12x NVFP4 GEMM opt-in vs stock Cutlass (A/B, 2026-08-19)
+
+Motivation: HF Qwen3.8-27B discussion #132 claims `--linear-backend flashinfer_b12x`
+(SM120 warp-level MMA FP4 GEMM via FlashInfer) yields +6% decode vs stock auto.
+Same vLLM version (0.27.1), RTX 5090, so directly applicable in principle.
+
+Required temporary work on this stock env (both one-line patches applied live
+for the A/B, then reverted — pristine stock restored 2026-08-19; the file now
+carries no trace). Re-apply both to retry:
+1. **Registry**: `FlashInferB12xNvFp4LinearKernel` was imported + mapped but never
+   added to `_POSSIBLE_NVFP4_KERNELS["CUDA"]`, so the opt-in flag hard-failed
+   (`--linear-backend=flashinfer_b12x ... no 'flashinfer_b12x' kernel exists for
+   NVFP4 layers`). Added it at the END of the list so auto-selection priority is
+   unchanged; `--linear-backend flashinfer_b12x` now resolves.
+2. **Map entry**: the b12x backend set contained only the B12x class, so the
+   filter ALSO refused the model's W8A8-FP8 layers (unsloth NVFP4 blend carries
+   CompressedTensorsW8A8Fp8 layers; the thread's weights were pure NVFP4).
+   Added `CutlassFP8ScaledMMLinearKernel` as fallback in the `flashinfer_b12x`
+   map entry — used only for FP8 layers, never for NVFP4 GEMM.
+3. **Env**: `has_flashinfer()` is False at boot unless nvcc is on PATH (no
+   prebuilt cubins in the 0.6.16.post3 wheel). Thread requires
+   `CUDA_HOME=<cuda>` + `MAX_JOBS=2`; we used the box's own CUDA 13.3.
+   (Environment only, no file change — survives.)
+
+Measurement (fresh boot each arm, same script = repo speed harness, pre-bench
+soak with Triton-JIT flush, 6x 400-token full-length single-stream decode,
+all `finish=length`, content-empty/reasoning-heavy as this stack normally does):
+
+| arm | tok/s per rep | mean | median | sd |
+|-----|--------------|------|--------|----|
+| base (Cutlass, stock) | 123.4 133.9 132.7 130.4 131.5 121.2 | 128.9 | 131.5 | 5.4 |
+| b12x | 147.5 119.3 107.6 137.8 149.4 124.2 | 131.0 | 131.0 | 15.5 |
+
+Verdict: NO improvement on this stack. Means/medians statistically tied
+(+1.6%/-0.4% on mean, exactly tied on median) and b12x var is ~3x worse with a
+slow tail (two 107–124 reps vs base's tight 121–134 band). Correctness retained
+(2+2=4, Paris) — b12x is numerically sane here, just not faster. The +6% figure
+came from a fp8-KV + static-MTP/full-graph stack; on 4-bit KV + dynamic
+spec/PIECEWISE graphs + unsloth weights it does not reproduce.
+
+Decision: stock launch unchanged. b12x is a manual opt-in only — to retry
+you must re-apply the two one-line patches (registry + map fallback) above,
+then pass `--linear-backend flashinfer_b12x` with nvcc on PATH.
